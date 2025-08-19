@@ -8,16 +8,27 @@ export const runtime = 'edge';
 const cacheKey = 'options_v1';
 let memo: any | null = null; let memoAt = 0;
 
-function okJson(data: any) {
+function okJson(data: any, cache = true) {
   return NextResponse.json(data, {
-    headers: {
-      'Cache-Control': 's-maxage=21600, stale-while-revalidate=600', // 6h
-      'Access-Control-Allow-Origin': '*',
-    },
+    headers: cache
+      ? {
+          'Cache-Control': 's-maxage=21600, stale-while-revalidate=600',
+          'CDN-Cache-Control': 's-maxage=21600, stale-while-revalidate=600',
+          'Access-Control-Allow-Origin': '*',
+        }
+      : {
+          'Cache-Control': 'no-store',
+          'CDN-Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        },
   });
 }
 
 export async function GET(req: Request) {
+
+  const url = new URL(req.url);
+  const force = url.searchParams.get('force') === '1';
+
   // レート制限（Edge）
   if (rate) {
     const ip = req.headers.get('x-forwarded-for') ?? 'anon';
@@ -25,8 +36,10 @@ export async function GET(req: Request) {
     if (!success) return NextResponse.json({ error: 'rate_limited' }, { status: 429 });
   }
 
-  // メモリキャッシュ（6h）
-  if (memo && Date.now() - memoAt < 6 * 3600 * 1000) return okJson(memo);
+  // メモリキャッシュ（6h）: force のときは無視
+  if (!force && memo && Date.now() - memoAt < 6 * 3600 * 1000) {
+    return okJson(memo, true);
+  }
 
   const prompt = `
 あなたはクリエイティブなゲーム作家です。
@@ -55,7 +68,7 @@ export async function GET(req: Request) {
     if (!data.heroes.length) throw new Error('empty');
 
     memo = data; memoAt = Date.now();
-    return okJson(data);
+    return okJson(data, !force);
   } catch(e) {
     const fallback = {
       heroes: [e],
